@@ -1,0 +1,33 @@
+name: Hourly search run
+
+# Replaces Celery Beat for the free deployment (see README "Free deployment"):
+# Render's free tier doesn't include a persistent background-worker process,
+# but the backend already exposes the exact same search pipeline as a plain
+# HTTP endpoint, so a scheduled workflow hitting it does the same job.
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour, on the hour (UTC)
+  workflow_dispatch: {} # allows manually triggering a run from the Actions tab
+
+jobs:
+  trigger-search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/search/run
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          if [ -z "$BACKEND_URL" ]; then
+            echo "::error::Set the BACKEND_URL repository secret to your Render backend's public URL."
+            exit 1
+          fi
+          http_code=$(curl -s -o response.json -w "%{http_code}" -X POST \
+            -H "X-API-Key: $API_KEY" \
+            "$BACKEND_URL/api/search/run")
+          echo "HTTP $http_code"
+          cat response.json
+          if [ "$http_code" -ge 300 ]; then
+            echo "::error::Search run failed with HTTP $http_code"
+            exit 1
+          fi

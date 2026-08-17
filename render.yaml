@@ -1,0 +1,50 @@
+# Render Blueprint for the free-tier backend deployment.
+# See README "Free deployment" for the full step-by-step guide, including
+# creating the Neon Postgres database this service needs DATABASE_URL for.
+#
+# Deploy with: https://dashboard.render.com/blueprints -> New Blueprint
+# Instance -> point at this repo. Or create the web service manually using
+# the same settings below.
+services:
+  - type: web
+    name: roomsearch-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /api/health
+    # Render assigns the listen port via $PORT; migrations + seed run once
+    # per deploy before the API starts serving.
+    dockerCommand: >
+      sh -c "alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        sync: false # paste your Neon connection string in the Render dashboard
+      - key: SECRET_KEY
+        generateValue: true
+      - key: API_KEY
+        generateValue: true
+      - key: NOTIFICATION_MODE
+        value: immediate
+      - key: EMAIL_NOTIFICATIONS_ENABLED
+        value: "false"
+      - key: TELEGRAM_NOTIFICATIONS_ENABLED
+        value: "false"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
+      - key: NOTIFICATION_EMAIL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false # set to your Vercel frontend URL, e.g. https://roomsearch.vercel.app
