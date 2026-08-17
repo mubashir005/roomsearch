@@ -9,6 +9,10 @@ venv/
 *.egg-info/
 .pytest_cache/
 backend/tests/test_roomsearch.db
+backend/celerybeat-schedule
+
+# Vercel
+.vercel
 
 # Node / Next.js
 node_modules/
