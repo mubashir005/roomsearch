@@ -182,3 +182,15 @@ class DashboardStatsOut(BaseModel):
     unseen: int
     sources_online: int
     sources_total: int
+
+
+class QuickAddIn(BaseModel):
+    text: str
+    url: str | None = None
+
+
+class QuickAddOut(BaseModel):
+    listing: ListingOut
+    is_new: bool
+    used_ai_fallback: bool
+    ai_fields_filled: list[str]

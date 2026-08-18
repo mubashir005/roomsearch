@@ -3,6 +3,7 @@ import type {
   Listing,
   ListingListResponse,
   NotificationLogEntry,
+  QuickAddResponse,
   SearchProfile,
   SearchRun,
   Source,
@@ -72,4 +73,6 @@ export const api = {
     apiFetch<{ ok: boolean }>("/api/notifications/mark-all-read", { method: "POST" }),
   getSettings: () => apiFetch<Record<string, unknown>>("/api/settings"),
   triggerSearch: () => apiFetch<SearchRun>("/api/search/run", { method: "POST" }),
+  quickAdd: (payload: { text: string; url?: string }) =>
+    apiFetch<QuickAddResponse>("/api/listings/quick-add", { method: "POST", body: JSON.stringify(payload) }),
 };

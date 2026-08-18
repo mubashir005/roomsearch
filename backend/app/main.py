@@ -8,7 +8,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import require_api_key
 from app.config import get_settings
-from app.routers import dashboard, listings, notifications, run_history, search, search_profiles, settings as settings_router, sources
+from app.routers import (
+    dashboard,
+    listings,
+    notifications,
+    quick_add,
+    run_history,
+    search,
+    search_profiles,
+    settings as settings_router,
+    sources,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,6 +45,7 @@ app.include_router(settings_router.router, dependencies=_protected)
 app.include_router(run_history.router, dependencies=_protected)
 app.include_router(search.router, dependencies=_protected)
 app.include_router(dashboard.router, dependencies=_protected)
+app.include_router(quick_add.router, dependencies=_protected)
 
 
 @app.get("/api/health")

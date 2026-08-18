@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000"
 
+    # AI parsing fallback (task section 29) -- only used for /api/listings/quick-add,
+    # and only for fields deterministic parsing (price_parser/german_terms) left
+    # unknown. Leave unset to run quick-add in deterministic-only mode.
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+
     @property
     def celery_broker_url(self) -> str:
         return self.CELERY_BROKER_URL or self.REDIS_URL

@@ -108,6 +108,13 @@ export interface NotificationLogEntry {
   created_at: string;
 }
 
+export interface QuickAddResponse {
+  listing: Listing;
+  is_new: boolean;
+  used_ai_fallback: boolean;
+  ai_fields_filled: string[];
+}
+
 export interface DashboardStats {
   new_today: number;
   high_priority: number;

@@ -22,6 +22,7 @@ roomsearch/
       schemas.py                 Pydantic API schemas
       listing_schema.py          NormalizedListing (adapter output contract)
       pipeline.py                Orchestrates one full search run
+      ai_parsing.py              Optional OpenAI fallback for Quick Add (fills gaps only)
       seed.py                    Idempotent seed data (sources + profiles)
       celery_app.py              Celery app + Beat schedule
       tasks.py                   Celery tasks (hourly search, digests)
@@ -49,13 +50,13 @@ roomsearch/
         dispatcher.py               Fans out to enabled channels, logs, marks notified
         digest.py                   Hourly/daily digest batch sending
       routers/                   FastAPI routers (listings, sources, search-profiles,
-                                  notifications, settings, run-history, search, dashboard)
+                                  notifications, settings, run-history, search, dashboard, quick_add)
     alembic/                     Database migrations
-    tests/                       99 unit + integration tests, no external network needed
+    tests/                       108 unit + integration tests, no external network needed
   frontend/                      Next.js 14 (App Router) + TypeScript + Tailwind
     app/
       api/[...path]/route.ts     Same-origin proxy to the backend; attaches API_KEY server-side
-      dashboard/ listings/ sources/ search-profiles/
+      dashboard/ listings/ quick-add/ sources/ search-profiles/
       notifications/ settings/ run-history/
     components/                 ListingCard, ImageCarousel, Nav, StatTile, SearchNowButton
     lib/                        api.ts (typed API client), types.ts
@@ -74,7 +75,8 @@ roomsearch/
 - **Notifications**: SMTP email (Gmail/Outlook/generic, HTML + plain text, exact subject/body format from the spec), Telegram Bot API, and a dashboard notification log with an unread counter. Each channel is independently enabled via `.env`. Immediate / hourly-digest / daily-digest modes are all implemented and tested.
 - **One source failing never stops the others** -- each adapter's exceptions are caught per-source, logged to both the `Source` admin row and the `SearchRun` log, and the run continues.
 - **Dashboard** (Next.js): `/dashboard`, `/listings` (with all the filters from spec section 11), `/sources` (admin: enable/disable, priority, test, run now), `/search-profiles` (CRUD), `/notifications` (unread counter + mark read), `/settings` (effective config + default scoring weights), `/run-history` (per-source breakdown of every run). CSV/JSON export, including "new only".
-- **Tests**: 99 tests, all passing, covering price parsing, German terminology, warm-rent derivation, location matching, scoring, duplicate detection, notification formatting/dispatch, source adapters (incl. image extraction), the full pipeline (including "don't re-notify" and digest-mode behavior), the HTTP API, and API-key auth -- all using mock/fixture data, zero external network dependencies.
+- **Tests**: 108 tests, all passing, covering price parsing, German terminology, warm-rent derivation, location matching, scoring, duplicate detection, notification formatting/dispatch, source adapters (incl. image extraction), the full pipeline (including "don't re-notify" and digest-mode behavior), the HTTP API, API-key auth, Quick Add, and the AI parsing fallback -- all using mock/fixture data, zero external network dependencies.
+- **Quick Add + AI parsing fallback**: `/quick-add` lets you feed real, user-sourced listings into the full pipeline (see section 5) -- the practical answer to "no automated source is legally available." Deterministic parsing runs first; an optional `OPENAI_API_KEY` fills gaps in messy text without ever overriding a deterministic result.
 - **Dockerized**: 6 services (postgres, redis, backend, worker, scheduler, frontend), `docker-compose.yml`, Dockerfiles, Alembic migrations, seed data.
 - **Listing photos**: `NormalizedListing.images` is rendered as an image-forward carousel on every listing card. The generic RSS adapter extracts photos from `media:content`/`media:thumbnail`/image enclosures automatically; the mock/demo source ships with real (Picsum-seeded) photos so the UI is meaningful without any source configured.
 - **Optional API-key auth** (`API_KEY` env var, `app/auth.py`): a no-op for local/self-hosted use, and a required `X-API-Key` header on every route except `/api/health` once set -- needed the moment the API has a public URL (see section 11, "Free deployment").
@@ -104,7 +106,15 @@ All eight are implemented as full adapter classes (satisfying the interface) but
 
 To enable any of these, you would need an official data-partnership/API agreement with the provider -- then implement `search()`/`get_listing()` in that file and flip `available = True`.
 
-## 5. How to configure email
+## 5. Getting real listings in: Quick Add
+
+Since no automated source ships enabled by default (section 4), real listings get in through **Quick Add** (`/quick-add` in the dashboard, `POST /api/listings/quick-add`) -- you paste in a listing you found yourself (browsing WG-Gesucht/ImmoScout/Kleinanzeigen personally, a ChatGPT search summary, a friend's tip, anywhere), optionally with the source URL, and it runs through the exact same pipeline as an automated source: deterministic German-terminology parsing, scoring, cross-source duplicate detection (it'll correctly merge with a listing already in the database if the same apartment shows up elsewhere), and notifications.
+
+**Why this is the right line to draw, not a workaround:** a person reading a webpage and pasting what they found is just using the internet -- no different from bookmarking a listing. What the project deliberately does not do (see section 4, and `app/sources/disabled.py`) is have *code* -- including an LLM with browsing/search tools -- autonomously and repeatedly fetch those same sites on a schedule. Routing scraping through an AI API doesn't change what it legally is; it's still automated, systematic extraction from a site whose Terms of Service prohibit it. Quick Add keeps a human in the loop for the fetch step, which is the actual distinction that matters.
+
+**Optional AI parsing fallback** (task section 29, now actually wired up): deterministic parsing (`price_parser.py`, `german_terms.py`) always runs first and handles clearly-worded text fine. For messier free-form text -- e.g. a casual ChatGPT summary that doesn't use exact German terminology -- set `OPENAI_API_KEY` in `.env` (see `.env.example`) and the OpenAI API fills in *only* the fields deterministic parsing left unknown; it never overrides a value already found. Leave it unset and Quick Add still works, just in deterministic-only mode.
+
+## 6. How to configure email
 
 Edit `.env` (copy from `.env.example`):
 
@@ -124,7 +134,7 @@ NOTIFICATION_EMAIL=you@gmail.com
 
 Credentials are read from environment variables only -- never hardcoded, never committed (`.env` is gitignored).
 
-## 6. How to configure Telegram
+## 7. How to configure Telegram
 
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, `/newbot`, get a bot token.
 2. Message your new bot once, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your `chat.id`.
@@ -135,7 +145,7 @@ Credentials are read from environment variables only -- never hardcoded, never c
    TELEGRAM_CHAT_ID=123456789
    ```
 
-## 7. How to start the application
+## 8. How to start the application
 
 ```bash
 cp .env.example .env
@@ -163,13 +173,13 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # first 
 
 or inside the running container: `docker compose exec backend python -m pytest tests/ -v`
 
-## 8. How to change search criteria
+## 9. How to change search criteria
 
 Search criteria live in `SearchProfile` rows, editable from **/search-profiles** in the dashboard or via the API (`POST/PUT /api/search-profiles`). Two profiles are seeded by default ("Hannover Studio October", "Hannover Ultra Budget") matching the spec's examples. Each profile controls: city, preferred districts/nearby areas, max Warmmiete, preferred/min size, max rooms, target availability date, Anmeldung preference, notification mode/channels, minimum score to notify, and per-profile scoring-weight overrides (`scoring_weights`, merged over the defaults in `app/matching/scoring.py`).
 
 A listing is scored against every *active* profile; the highest score (and that profile's explanation) is stored on the listing.
 
-## 9. How to add another source
+## 10. How to add another source
 
 1. Create `backend/app/sources/your_source.py` subclassing `AccommodationSource` (or `GenericRssSource`/`DisabledSource` if applicable), implementing `search`, `get_listing`, `health_check`.
 2. Register it in `backend/app/sources/registry.py`.
@@ -177,11 +187,11 @@ A listing is scored against every *active* profile; the highest score (and that 
 
 Nothing else in the pipeline, dashboard, scoring, or dedup logic needs to change.
 
-## 10. How the hourly scheduler works
+## 11. How the hourly scheduler works
 
 Celery Beat (the `scheduler` service) fires `app.tasks.run_scheduled_search` every `SEARCH_INTERVAL_MINUTES` (default 60, from `.env`). The task opens a DB session and calls the same `run_search()` pipeline used by the "Search Now" button and the `/api/search/run` endpoint, so scheduled and manual runs behave identically. Celery Beat also checks `app.tasks.run_hourly_digest` (5 minutes past every hour) and `app.tasks.run_daily_digest` (08:00 daily) -- both no-op unless `NOTIFICATION_MODE` is set to the matching digest mode, in which case they batch-send any matched-but-not-yet-notified listings. The `worker` service executes the actual task; `backend` only serves the API.
 
-## 11. Free deployment (Vercel + Render + Neon + GitHub Actions)
+## 12. Free deployment (Vercel + Render + Neon + GitHub Actions)
 
 Docker Compose (section 7) is the full-featured deployment: Celery worker + Beat give you true background scheduling. But `run_search()` is also called directly and synchronously from `POST /api/search/run` -- the API itself has **zero dependency on Celery or Redis**. That means a $0/month deployment doesn't need to replicate the worker/beat/Redis services at all; it just needs somewhere to run the API + Postgres, and something to hit that one endpoint once an hour.
 
@@ -237,10 +247,10 @@ Docker Compose (section 7) is the full-featured deployment: Celery worker + Beat
 - Actions tab -- run `hourly-search` manually once (`workflow_dispatch`) and confirm it returns HTTP 200 with a JSON run summary.
 - Render logs -- you should see the request land and `run_search` execute.
 
-## 12. Test results
+## 13. Test results
 
 ```
-99 passed in ~1-3s (0 external network calls)
+108 passed in ~1-3s (0 external network calls)
 ```
 
 Covers: price parsing (incl. German decimal format, estimated-vs-unknown warm rent), German terminology (rooms/size/furnished/Anmeldung/rental type, including the "keine Anmeldung möglich" negative case), location matching, the full 0-100 scoring rubric (incl. custom weight overrides and score clamping), duplicate detection (content hashing, fuzzy cross-source similarity, canonical merging), notification formatting/dispatch (email/Telegram content, "disabled channel = no network call", dashboard log + notified-state marking), source adapters (mock fixtures, disabled-source contracts, RSS entry normalization without network, RSS media-image extraction), the full pipeline (discovery -> scoring -> dedup -> notify -> "never re-notify the same listing" -> digest-mode deferral), the HTTP API (source admin gating, manual search, listings, export, dashboard stats, run history), and the `API_KEY` auth gate (open when unset, 401s on missing/wrong key when set, `/api/health` always open).
@@ -254,11 +264,12 @@ Also manually verified against a real (non-SQLite) PostgreSQL instance via Docke
 - All dashboard pages (`/dashboard`, `/listings`, `/sources`, `/search-profiles`, `/notifications`, `/settings`, `/run-history`) render server-side with live data from the API.
 - The new `app/api/[...path]/route.ts` proxy verified end-to-end: same-origin requests through the Next.js container reach the backend and return real data, with `API_KEY` gating confirmed to 401 unauthenticated/wrong-key requests and pass authenticated ones (`/api/health` stays open either way).
 
-## 13. Remaining limitations
+## 14. Remaining limitations
 
-- **No production-legal live scraping source ships out of the box.** Every major German listing platform's ToS forbids automated scraping and none offers a free public API, so real listings require either (a) a legitimate RSS feed you configure into `rss_generic`/`meinestadt`, or (b) an official partner API you implement as a new adapter. This is a deliberate legal-compliance decision, not an oversight -- see section 4.
+- **No production-legal live scraping source ships out of the box.** Every major German listing platform's ToS forbids automated scraping and none offers a free public API, so real listings require either (a) a legitimate RSS feed you configure into `rss_generic`/`meinestadt`, (b) an official partner API you implement as a new adapter, or (c) **Quick Add** (section 5) for listings you find yourself. This is a deliberate legal-compliance decision, not an oversight -- see section 4.
 - **"Search Now" runs synchronously** in the current build (the API request blocks until the run finishes) rather than streaming live per-source progress over a WebSocket. This is fine at the current scale (adapters are fast), but a live progress stream would need a WebSocket/SSE endpoint -- not implemented.
 - **Image similarity** for dedup only compares image *filenames*, not perceptual image hashing (no image downloads happen), which is the practical, ToS-safe interpretation of "image similarity if practical."
 - **Map view** (section 23, "if practical") was not implemented -- listings carry `latitude`/`longitude` fields ready for one if a source ever supplies coordinates.
-- **AI parsing fallback** (section 29) is architecturally deferred rather than wired to a live LLM call: deterministic parsing (`price_parser.py`, `german_terms.py`) handles every case in the current sources' fixture/RSS data, and the spec's own example (`"430 euros plus 70 euros utilities, heating included"`) is already handled by the regex-based parser's cold+utilities-derivation path. No LLM API key is required to run the app.
+- **Quick Add has no address extractor.** Deterministic parsing pulls district/city/rent/size/rooms/etc. from free text but not street address (no regex for arbitrary German street formats) -- dedup still works fine off the other signals (rent, size, rooms, title/description similarity), just slightly weaker than sources that supply a structured address.
+- `datetime.utcnow()` is used throughout (matches SQLAlchemy's naive-DateTime columns); Python flags it as deprecated in favor of timezone-aware datetimes. Functionally harmless today, worth migrating if the codebase moves to timezone-aware storage later.
 - `datetime.utcnow()` is used throughout (matches SQLAlchemy's naive-DateTime columns); Python flags it as deprecated in favor of timezone-aware datetimes. Functionally harmless today, worth migrating if the codebase moves to timezone-aware storage later.
